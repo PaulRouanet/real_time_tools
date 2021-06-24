@@ -273,6 +273,7 @@ void RealTimeThread::block_memory()
  **********************************************************/
 #if defined NON_REAL_TIME
 
+#if 0
 RealTimeThread::RealTimeThread()
 {
     thread_.reset(nullptr);
@@ -310,6 +311,186 @@ void RealTimeThread::block_memory()
 {
     // do nothing
 }
+#endif
+#if 1
+RealTimeThread::RealTimeThread()
+{
+    thread_.reset(nullptr);
+}
+
+RealTimeThread::~RealTimeThread()
+{
+    join();
+    thread_.reset(nullptr);
+}
+
+void* exec(void (*f)(void*), void* args)
+{
+    f(args);
+    return nullptr;
+}
+
+/**
+ * @brief rt_preempt_error_message id common message for all things that could
+ * go wrong.
+ */
+const std::string rt_preempt_error_message(
+    "NOTE: This program must be executed with special permission to get "
+    "the required real time permissions.\n"
+    "Either use sudo or be part of the \'realtime\' group"
+    "Aborting thread creation.");
+
+int RealTimeThread::create_realtime_thread(void* (*thread_function)(void*),
+                                           void* args)
+{
+    if (thread_ != nullptr)
+    {
+        printf("Thread already running");
+    }
+
+    if (parameters_.cpu_dma_latency_ >= 0)
+    {
+        set_cpu_dma_latency(parameters_.cpu_dma_latency_);
+    }
+
+    thread_.reset(new pthread_t());
+
+    if (parameters_.block_memory_)
+    {
+        block_memory();
+    }
+
+    struct sched_param param;
+    pthread_attr_t attr;
+    int ret;
+
+    ret = pthread_attr_init(&attr);
+    if (ret)
+    {
+        printf(
+            "%s %d\n",
+            ("init pthread attributes failed. Ret=" + rt_preempt_error_message)
+                .c_str(),
+            ret);
+        return ret;
+    }
+
+    /* Set a specific stack size  */
+    ret = pthread_attr_setstacksize(&attr, parameters_.stack_size_);
+    if (ret)
+    {
+        printf("%s %d\n",
+               ("pthread setstacksize failed. Ret=" + rt_preempt_error_message)
+                   .c_str(),
+               ret);
+        return ret;
+    }
+
+    /* Set scheduler policy and priority of pthread */
+    ret = pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+    // ret = pthread_attr_setschedpolicy(&attr, SCHED_RR); // WARNING LAAS is
+    // using this one!!!!
+    if (ret)
+    {
+        printf(
+            "%s %d\n",
+            ("pthread setschedpolicy failed. Ret=" + rt_preempt_error_message)
+                .c_str(),
+            ret);
+        return ret;
+    }
+    param.sched_priority = parameters_.priority_;
+    printf("Threa sched priority: %d\n", parameters_.priority_);
+    ret = pthread_attr_setschedparam(&attr, &param);
+    if (ret)
+    {
+        printf("%s %d\n",
+               ("pthread setschedparam failed. Ret=" + rt_preempt_error_message)
+                   .c_str(),
+               ret);
+        return ret;
+    }
+    /* Use scheduling parameters of attr */
+    ret = pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+    if (ret)
+    {
+        printf(
+            "%s %d\n",
+            ("pthread setinheritsched failed. Ret=" + rt_preempt_error_message)
+                .c_str(),
+            ret);
+        return ret;
+    }
+
+    /* Create a pthread with specified attributes */
+    ret = pthread_create(thread_.get(), &attr, thread_function, args);
+    if (ret)
+    {
+        handle_error_en(ret, "pthread_create");
+        return ret;
+    }
+
+    if (parameters_.cpu_id_.size() > 0)
+    {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        for (unsigned i = 0; i < parameters_.cpu_id_.size(); ++i)
+        {
+            CPU_SET(parameters_.cpu_id_[i], &cpuset);
+        }
+        ret = pthread_setaffinity_np(*thread_, sizeof(cpu_set_t), &cpuset);
+        if (ret)
+        {
+		        handle_error_en(ret, "pthread_setaffinity_np");
+        }
+
+        int get_aff_error = 0;
+        get_aff_error =
+            pthread_getaffinity_np(*thread_, sizeof(cpu_set_t), &cpuset);
+        if (get_aff_error)
+        {
+            handle_error_en(get_aff_error, "pthread_getaffinity_np");
+        }
+        printf("Set returned by pthread_getaffinity_np() contained: ");
+        for (unsigned j = 0; j < CPU_SETSIZE; j++)
+        {
+            if (CPU_ISSET(j, &cpuset))
+            {
+                printf("CPU %d, ", j);
+            }
+        }
+        printf("\n");
+    }
+    return ret;
+}
+
+int RealTimeThread::join()
+{
+    int ret = 0;
+    if (thread_ != nullptr)
+    {
+        /* Join the thread and wait until it is done */
+        ret = pthread_join(*thread_, nullptr);
+        if (ret)
+        {
+            printf("join pthread failed.\n");
+        }
+        thread_.reset(nullptr);
+    }
+    return ret;
+}
+
+void RealTimeThread::block_memory()
+{
+    /* Lock memory */
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) == -1)
+    {
+        printf("mlockall failed: %m\n");
+        exit(-2);
+    }
+}
+#endif
+
 #endif  // Defined NON_REAL_TIME
 
 }  // namespace real_time_tools

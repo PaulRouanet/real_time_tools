@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+
 #ifdef XENOMAI
 // you MAY need to happend "static" upon declaration
 #define THREAD_FUNCTION_RETURN_TYPE void
@@ -30,7 +31,10 @@
 
 #elif defined NON_REAL_TIME
 #include <iostream>
-#include <thread>
+#include <limits.h>
+#include <pthread.h>
+#include <sys/mman.h>
+//#include <thread>
 // you need to happend "static" upon declaration
 #define THREAD_FUNCTION_RETURN_TYPE void*
 #define THREAD_FUNCTION_RETURN_VALUE nullptr
@@ -52,6 +56,9 @@
 #define rt_printf printf
 
 #endif
+
+#define handle_error_en(en, msg) \
+               do { errno = en; perror(msg); exit(EXIT_FAILURE); } while (0)
 
 namespace real_time_tools
 {
@@ -85,7 +92,8 @@ public:
         dedicated_cpu_id_ = -1;
         priority_ = 75;  // not too high to avoid competition with SL
 #elif defined NON_REAL_TIME
-        stack_size_ = -1;
+	      //        stack_size_ = -1;
+        stack_size_ = 50 * PTHREAD_STACK_MIN;
 #elif defined RT_PREEMPT
         stack_size_ = 50 * PTHREAD_STACK_MIN;
 #endif
@@ -203,7 +211,8 @@ private:
 #if defined(XENOMAI)
     RT_TASK thread_;
 #elif defined(NON_REAL_TIME)
-    std::unique_ptr<std::thread> thread_;
+    //std::unique_ptr<std::thread> thread_;
+    std::unique_ptr<pthread_t> thread_;
 #elif defined(RT_PREEMPT)
     std::unique_ptr<pthread_t> thread_;
 #endif
